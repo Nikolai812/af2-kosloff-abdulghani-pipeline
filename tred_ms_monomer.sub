@@ -90,7 +90,7 @@ echo "======================================================="
 echo "           "
 echo "           "
 
-OR_OUTPUTS=${BASEDIR}/or_outputs
+OR_OUTPUTS=${BASEDIR}/OR_OUTPUTS
 echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
 echo "Alphafold2 output processing at ${SLURM_JOBID}  the time: $(date)"
 echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
@@ -104,5 +104,41 @@ echo "           "
 echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
 echo "Alphafold2 postprocessing completed at time: $(date)"
 echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+
+
+
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo "PLDDT scores preparation at ${SLURM_JOBID}  the time: $(date)"
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo ""
+echo "Doing plddt for ${SLURM_JOBID}_processed pdb files"
+# python3 plddt_scorer.py  -i ./woutputs/156010_processed/
+# python3 plddt_scorer.py  -i ./OR_OUTPUTS/HsOR343/
+python3 plddt_scorer.py --input=./woutputs/${SLURM_JOBID}_processed/
+
+echo "========================================================================================"
+echo "Going to get/update plddt scores for OR_NAME located pdb files"
+
+mapfile -t this_job_or_names < <(find "./woutputs/${SLURM_JOBID}" -mindepth 1 -maxdepth 1 -type d ! -name ".*"  -printf "%f\n")
+
+echo ".. got or_names witth mapfile..: ${or_names[@]}"
+echo "========================================================================================"
+
+echo ""
+for or_name in "${this_job_or_names[@]}"; do
+    echo "--------------------------------------------------------------------"
+    echo "Processing $or_name with plddt_scorer.py"
+    python3 plddt_scorer.py  -i $OR_OUTPUTS/$or_name
+    echo "--------------------------------------------------------------------"
+    echo ""
+done
+
+
+echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo "DONE PLDDT scores for ${SLURM_JOBID} at the time: $(date), SCRIPT COMPLETED"
+echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+
+
+
 
 
