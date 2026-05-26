@@ -1,7 +1,7 @@
 # af2-kosloff-abdulghani-pipeline. Version 1.1 (Documentation)
 
 This pipeline is expected to run AlphaFold2 predictions with a minimal processing of the AlphaFold2 output. It can be used at  **DLC** cluster at Haifa university, where **GPU** unit is available with up to *40GB* of memory available for a GPU unit.
-
+Version 1.1 (26.05.2026)
 
 ## Installation
 An available user account at the **DLC** cluster is a prerequisite.
@@ -18,17 +18,27 @@ cp /users/public_data/AlphaFoldMulti/AF_image.sqsh .
 The pipeline is installed
 
 ## Running the pipeline (input file preparation and start)
-There are 2 dirrefent scripts to run the pipeline: *tred_ms_monomer.sub* shall be used for monomer AlphaFold2 option (with several possible monomers within one input .fasta file), while *tred_multimer.sub* shall be used for multimer AlphaFold2 option.
-- Before running the pipeline,one has to place the input fasta file 'my_protein.fasta' inside the *AF_inputs* directory
-- Update correspondingly the script file (*tred_ms_monomer.sub* or *tred_multimer.sub*) - replace the 10th or 11th line (starting with *FASTA=...*)  => *FASTA=my_protein.fasta*
-- start running the script (monomer)
+There are 3 dirrefent scripts to run the pipeline: *tred_ms_monomer.sub* shall be used for monomer AlphaFold2 option (with several possible monomers within one input .fasta file), *tred_array_ms_monomer.sub* shall be used when there are many (>10) sequenses in your .fasta file - this scripts starts array of 4 parallel jobs , and finally the  *tred_multimer.sub* shall be used for multimer AlphaFold2 option.
+- Before starting the pipeline, one has to place the input fasta file 'my_protein.fasta' inside the *AF_inputs* directory
+- Start running the script (monomer) with 'my_protein.fasta' as a command-line parameter:
+
 ```bash
-sbatch tred_ms_monomer.sub
+sbatch tred_ms_monomer.sub my_protein.fasta
 ```
+
+or array job script for monomer in case of more that ~10 sequences:
+
+```bash
+sbatch tred_array_ms_monomer.sub my_protein.fasta
+```
+
 or multimer:
 ```bash
-sbatch tred_multimer.sub
+sbatch tred_multimer.sub my_protein.fasta
 ```
+
+
+It you do not specify "my_protein.fasta" as a command-line parameter, the default value from the scropt (tred_ms_monomer.sub, tred_array_ms_monomer.sub, tred_multimer.sub)
 
 ## Running the pipeline (monitoring and gathering the output)
 After the script has got started, the sbatch jon gets its number assigned. The job out is written to the output file %jobnumber%(splitmono|mu).out. Since the job can run for many hours it is possible to watch the current output. You can also check the job status by *squeue* command.
