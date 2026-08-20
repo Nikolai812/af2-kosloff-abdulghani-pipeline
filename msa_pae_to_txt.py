@@ -1,6 +1,7 @@
 import argparse
 import csv
 import logging
+import sys
 from pathlib import Path
 
 
@@ -51,10 +52,6 @@ def parse_a3m(file_path):
                         )
                     )
 
-                #
-                # Everything after '>' up to the first whitespace
-                # is used as the sequence identifier.
-                #
                 sequence_id = line[1:].split()[0]
                 sequence_parts = []
 
@@ -140,9 +137,8 @@ def read_hhr(file_path):
 
     HHR is not an MSA file. It contains template-search results.
 
-    For this first implementation we preserve every non-empty line
-    as a separate CSV row so that the complete HHR information is
-    available in the fourth section of the CSV.
+    For this implementation we preserve every non-empty line
+    as a separate TSV row.
     """
 
     lines = []
@@ -157,11 +153,14 @@ def read_hhr(file_path):
     return lines
 
 
-def write_section(writer, database_name, records, section_type="sequence"):
+def write_section(
+    writer,
+    database_name,
+    records,
+    section_type="sequence",
+):
     """
-    Write one database section into the CSV file.
-
-    The section is preceded by a section marker.
+    Write one database section into the output file.
     """
 
     writer.writerow(
@@ -221,16 +220,21 @@ def write_section(writer, database_name, records, section_type="sequence"):
     writer.writerow([])
 
 
-def create_msa_csv(or_name_dir, output_dir):
+def create_msa_csv(
+    or_name_dir,
+    output_dir,
+    separator="\t",
+):
     """
-    Create {OR_NAME}_msa.csv for one AlphaFold2 prediction.
+    Create {OR_NAME}_msa.tsv for one AlphaFold2 prediction.
 
     Parameters:
         or_name_dir: Path to the OR_NAME AlphaFold2 output directory.
-        output_dir: Directory where the CSV should be written.
+        output_dir: Directory where the TSV should be written.
+        separator: Field separator. Tab by default.
 
     Returns:
-        Path to the created CSV file.
+        Path to the created TSV file.
     """
 
     or_name = or_name_dir.name
@@ -246,7 +250,7 @@ def create_msa_csv(or_name_dir, output_dir):
         return None
 
     #
-    # Verify all expected files.
+    # Verify expected files.
     #
     missing_files = []
 
@@ -264,17 +268,17 @@ def create_msa_csv(or_name_dir, output_dir):
         )
 
     #
-    # We can still create the CSV from the files that exist.
+    # Create output directory if necessary.
     #
     output_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    output_file = output_dir / f"{or_name}_msa.csv"
+    output_file = output_dir / f"{or_name}_msa.tsv"
 
     logger.info(
-        "Creating MSA CSV for '%s': %s",
+        "Creating MSA TSV for '%s': %s",
         or_name,
         output_file,
     )
@@ -286,7 +290,10 @@ def create_msa_csv(or_name_dir, output_dir):
         encoding="utf-8",
     ) as f:
 
-        writer = csv.writer(f)
+        writer = csv.writer(
+            f,
+            delimiter=separator,
+        )
 
         #
         # General information.
@@ -400,7 +407,7 @@ def create_msa_csv(or_name_dir, output_dir):
             )
 
     logger.info(
-        "Created MSA CSV: %s",
+        "Created MSA TSV: %s",
         output_file,
     )
 
@@ -414,13 +421,15 @@ def main():
 
     parser = argparse.ArgumentParser(
         description=(
-            "Extract AlphaFold2 MSA data from woutputs/<jobnumber> "
-            "and create CSV files."
+            "Extract AlphaFold2 MSA data from "
+            "woutputs/<jobnumber> and create TSV files."
         )
     )
 
     parser.add_argument(
-        "jobnumber",
+        "-j",
+        "--jobnumber",
+        required=True,
         help="Previously completed AlphaFold2 job number.",
     )
 
@@ -432,7 +441,7 @@ def main():
     script_dir = Path(__file__).resolve().parent
 
     #
-    # AlphaFold2 input/output directory.
+    # AlphaFold2 output directory.
     #
     woutputs_dir = script_dir / "woutputs"
 
@@ -502,10 +511,11 @@ def main():
         create_msa_csv(
             or_name_dir,
             processed_dir,
+            "\t",
         )
 
     #
-    # This is where the next processing step will be added:
+    # Next processing step:
     #
     # create_pae(...)
     #
@@ -519,9 +529,10 @@ def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-    )
+    if __name__ == "__main__":
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+        )
 
-    raise SystemExit(main())
+        sys.exit(main())
