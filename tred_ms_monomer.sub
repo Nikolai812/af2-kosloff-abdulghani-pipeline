@@ -7,15 +7,42 @@
 #SBATCH --error=%J.splitmono.out
 #SBATCH --output=%J.splitmono.out
 
-FASTA=HsORs_for_several_monomers_predictions.fasta
-#FASTA=dm1.fasta
-
 echo "======================================================="
+echo ""
 echo "!!! This script can handle multiple monomer sequences in one file !!! (af2 data source updated 25 JAN 2026 to /users/public_data/AlphaFoldMulti/alphafold_data1122)."
 echo ""
 echo "======================================================="
 echo ""
+
+FASTA=HsORs_for_several_monomers_predictions.fasta
+#FASTA=dm1.fasta
+
+# If a command-line argument was provided, use it instead
+if [ -n "$1" ]; then
+    FASTA="$1"
+    echo "+++++ Using FASTA file provided as argument: ${FASTA}"
+else
+    echo "----- No FASTA argument provided. Using default: ${FASTA}"
+fi
+echo ""
+
+# Expected location of the FASTA file
+FASTA_PATH="./AF_inputs/${FASTA}"
+
+# Check that the file exists
+if [ ! -f "${FASTA_PATH}" ]; then
+    echo "ERROR: FASTA file not found: ${FASTA_PATH}"
+    exit 1
+fi
+
+echo "Confirmed FASTA file exists: ${FASTA_PATH}"
+echo ""
+echo ""
+
+echo "======================================================="
+echo ""
 echo "Starting JOB ${SLURM_JOBID} for multiple mono input ${FASTA}  at $(date)"
+echo ""
 echo "======================================================="
 echo ""
 echo ""
@@ -90,7 +117,7 @@ echo "======================================================="
 echo "           "
 echo "           "
 
-OR_OUTPUTS=${BASEDIR}/or_outputs
+OR_OUTPUTS=${BASEDIR}/OR_OUTPUTS
 echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
 echo "Alphafold2 output processing at ${SLURM_JOBID}  the time: $(date)"
 echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
@@ -104,5 +131,41 @@ echo "           "
 echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
 echo "Alphafold2 postprocessing completed at time: $(date)"
 echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+
+
+
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo "PLDDT scores preparation at ${SLURM_JOBID}  the time: $(date)"
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo ""
+echo "Doing plddt for ${SLURM_JOBID}_processed pdb files"
+# python3 plddt_scorer.py  -i ./woutputs/156010_processed/
+# python3 plddt_scorer.py  -i ./OR_OUTPUTS/HsOR343/
+python3 plddt_scorer.py --input=./woutputs/${SLURM_JOBID}_processed/
+
+echo "========================================================================================"
+echo "Going to get/update plddt scores for OR_NAME located pdb files"
+
+mapfile -t this_job_or_names < <(find "./woutputs/${SLURM_JOBID}" -mindepth 1 -maxdepth 1 -type d ! -name ".*"  -printf "%f\n")
+
+echo ".. got or_names witth mapfile..: ${or_names[@]}"
+echo "========================================================================================"
+
+echo ""
+for or_name in "${this_job_or_names[@]}"; do
+    echo "--------------------------------------------------------------------"
+    echo "Processing $or_name with plddt_scorer.py"
+    python3 plddt_scorer.py  -i $OR_OUTPUTS/$or_name
+    echo "--------------------------------------------------------------------"
+    echo ""
+done
+
+
+echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo "DONE PLDDT scores for ${SLURM_JOBID} at the time: $(date), SCRIPT COMPLETED"
+echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+
+
+
 
 

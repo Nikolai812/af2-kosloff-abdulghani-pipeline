@@ -1,0 +1,180 @@
+#!/bin/bash
+#SBATCH -p dlc
+#SBATCH --gres=gpu:1
+#SBATCH -N 1
+#SBATCH -c 16
+#SBATCH -t 48:00:00
+#SBATCH --array=0-3
+#SBATCH --error=%A_%a.splitmono.out
+#SBATCH --output=%A_%a.splitmono.out
+
+
+echo "======================================================="
+echo "!!! This script can handle multiple monomer sequences in one file !!! (af2 data source updated 25 JAN 2026 to /users/public_data/AlphaFoldMulti/alphafold_data1122)."
+echo ""
+echo "======================================================="
+echo ""
+
+FASTA=HsORs_for_several_monomers_predictions.fasta
+#FASTA=dm1.fasta
+
+# If a command-line argument was provided, use it instead
+if [ -n "$1" ]; then
+    FASTA="$1"
+    echo "+++++ Using FASTA file provided as argument: ${FASTA}"
+else
+    echo "----- No FASTA argument provided. Using default: ${FASTA}"
+fi
+echo ""
+
+# Expected location of the FASTA file
+FASTA_PATH="./AF_inputs/${FASTA}"
+
+# Check that the file exists
+if [ ! -f "${FASTA_PATH}" ]; then
+    echo "ERROR: FASTA file not found: ${FASTA_PATH}"
+    exit 1
+fi
+
+echo "Confirmed FASTA file exists: ${FASTA_PATH}"
+echo ""
+
+
+echo "======================================================="
+echo "SLURM JOB ${SLURM_JOB_ID}  ARRAY TASK ${SLURM_ARRAY_TASK_ID}"
+echo "Started at $(date)"
+echo "======================================================="
+
+BASEDIR="$(pwd)"
+ALPHAFOLD_DATA_DIR=/users/public_data/AlphaFoldMulti/alphafold_data1122
+
+OUTPUTS=${BASEDIR}/woutputs/${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}
+
+mkdir -p $OUTPUTS
+mkdir -p ${BASEDIR}/AF_inputs/SUBMONO
+
+mounts="${BASEDIR}:/mount,${ALPHAFOLD_DATA_DIR}:/data,${OUTPUTS}:/outputs,${BASEDIR}/AF_inputs/:/AF_inputs"
+
+echo "Splitting FASTA sequences..."
+
+SPLITTED_FILES=$(python3 fasta_splitter.py \
+-i=${BASEDIR}/AF_inputs/${FASTA} \
+-o=${BASEDIR}/AF_inputs/SUBMONO)
+
+FILES=($SPLITTED_FILES)
+TOTAL=${#FILES[@]}
+
+echo "Total sequences: $TOTAL"
+
+SETS=4
+PER_SET=$(( (TOTAL + SETS - 1) / SETS ))
+
+START=$(( SLURM_ARRAY_TASK_ID * PER_SET ))
+END=$(( START + PER_SET - 1 ))
+
+echo "Processing files $START to $END"
+
+for ((i=$START; i<=$END && i<$TOTAL; i++))
+do
+
+    file=${FILES[$i]}
+
+    echo "========================================"
+    echo "Processing $file at $(date)"
+    echo "========================================"
+
+    RUNOPTS="--model_preset=monomer \
+    --num_multimer_predictions_per_model=1 \
+    --fasta_paths=/AF_inputs/SUBMONO/${file} \
+    --output_dir=/outputs \
+    --data_dir=/data/ \
+    --mgnify_database_path=/data/mgnify/mgy_clusters_2018_12.fa \
+    --template_mmcif_dir=/data/pdb_mmcif/mmcif_files/ \
+    --max_template_date=2020-05-14 \
+    --obsolete_pdbs_path=/data/pdb_mmcif/obsolete.dat \
+    --use_gpu_relax=False \
+    --bfd_database_path=/data/bfd/bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt \
+    --uniref90_database_path=/data/uniref90/uniref90.fasta \
+    --uniclust30_database_path=/data/uniclust30/uniclust30_2018_08/uniclust30_2018_08 \
+    --pdb70_database_path=/data/pdb70/pdb70"
+
+    srun -l \
+        --container-image=${BASEDIR}/AF_image.sqsh \
+        --container-mounts=${mounts} \
+        --container-workdir=/app/alphafold \
+        --no-container-entrypoint \
+        python /app/alphafold/run_alphafold.py $RUNOPTS
+
+    echo "Finished $file at $(date)"
+
+done
+
+
+echo "======================================================="
+echo "ARRAY TASK ${SLURM_ARRAY_TASK_ID} completed at $(date)"
+echo "======================================================="
+
+
+################################################################!!!!!!!!!!!!!!!!!!!!!!
+##########################################################
+# RUN POST-PROCESSING  FROM ANY ARRAY TASK
+##########################################################
+
+##### NO: if [[ ${SLURM_ARRAY_TASK_ID} -eq 3 ]]; then
+
+# EARLIER WAS DEFINED:
+# OUTPUTS=${BASEDIR}/woutputs/${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}
+JOB_ARRAY_DIR=${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}
+
+echo "======================================================="
+echo "Starting post-processing stage, JOB_ARRAY_DIR=${JOB_ARRAY_DIR}"
+echo "======================================================="
+
+OR_OUTPUTS=${BASEDIR}/OR_OUTPUTS
+
+echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo "Alphafold2 output processing at ${SLURM_JOB_ID} time: $(date)"
+echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+
+python3 output_name_update.py \
+-i=${JOB_ARRAY_DIR} \
+-p=${BASEDIR}/woutputs \
+-o=OR_OUTPUTS
+
+echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo "Alphafold2 postprocessing completed at time: $(date)"
+echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+
+
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo "PLDDT scores preparation at ${JOB_ARRAY_DIR} time: $(date)"
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+
+python3 plddt_scorer.py \
+--input=${BASEDIR}/woutputs/${JOB_ARRAY_DIR}_processed/
+
+
+echo "========================================================================================"
+echo "Going to get/update plddt scores for OR_NAME located pdb files"
+echo "========================================================================================"
+
+mapfile -t this_job_or_names < <(find "${BASEDIR}/woutputs/${JOB_ARRAY_DIR}" \
+-mindepth 1 -maxdepth 1 -type d ! -name ".*" -printf "%f\n")
+
+echo ".. got or_names with mapfile..: ${this_job_or_names[@]}"
+
+for or_name in "${this_job_or_names[@]}"; do
+
+    echo "--------------------------------------------------------------------"
+    echo "Processing $or_name with plddt_scorer.py"
+
+    python3 plddt_scorer.py -i ${OR_OUTPUTS}/${or_name}
+
+    echo "--------------------------------------------------------------------"
+
+done
+
+echo "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo "DONE PLDDT scores for ${JOB_ARRAY_DIR} at time: $(date)"
+echo "SCRIPT COMPLETED"
+

@@ -1,12 +1,13 @@
 import os
 import csv
 import argparse
+from typing import List, Tuple
 
 
 class PLDDTScorer:
 
     @classmethod
-    def extract_plddt_by_residue(cls, pdb_file) -> list[tuple[str, int, float]]:
+    def extract_plddt_by_residue(cls, pdb_file) -> List[Tuple[str, int, float]]:
         rows = []
         seen = set()
 
@@ -26,7 +27,7 @@ class PLDDTScorer:
         return rows
 
     @classmethod
-    def write_to_csv(cls, pdb_name: str, rows: list[tuple[str, int, float]], output_dir: str) -> None:
+    def write_to_csv(cls, pdb_name: str, rows: List[Tuple[str, int, float]], output_dir: str) -> None:
         output_path = os.path.join(output_dir, f"{pdb_name}_plddt.csv")
 
         with open(output_path, mode="w", newline="") as csvfile:
