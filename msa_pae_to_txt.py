@@ -1,6 +1,7 @@
 import argparse
 import csv
 import logging
+import pickle
 import sys
 from pathlib import Path
 
@@ -138,7 +139,7 @@ def read_hhr(file_path):
     HHR is not an MSA file. It contains template-search results.
 
     For this implementation we preserve every non-empty line
-    as a separate TSV row.
+    as a separate TSV/CSV row.
     """
 
     lines = []
@@ -224,17 +225,16 @@ def create_msa_csv(
     or_name_dir,
     output_dir,
     separator="\t",
+    extension=".tsv",
 ):
     """
-    Create {OR_NAME}_msa.tsv for one AlphaFold2 prediction.
+    Create {OR_NAME}_msa.tsv or {OR_NAME}_msa.csv.
 
     Parameters:
-        or_name_dir: Path to the OR_NAME AlphaFold2 output directory.
-        output_dir: Directory where the TSV should be written.
-        separator: Field separator. Tab by default.
-
-    Returns:
-        Path to the created TSV file.
+        or_name_dir: AlphaFold2 OR_NAME output directory.
+        output_dir: Directory where the output file is written.
+        separator: Field delimiter. Tab by default.
+        extension: Output file extension.
     """
 
     or_name = or_name_dir.name
@@ -275,10 +275,11 @@ def create_msa_csv(
         exist_ok=True,
     )
 
-    output_file = output_dir / f"{or_name}_msa.tsv"
+    output_file = output_dir / f"{or_name}_msa{extension}"
 
     logger.info(
-        "Creating MSA TSV for '%s': %s",
+        "Creating MSA %s for '%s': %s",
+        extension[1:].upper(),
         or_name,
         output_file,
     )
@@ -407,7 +408,200 @@ def create_msa_csv(
             )
 
     logger.info(
-        "Created MSA TSV: %s",
+        "Created MSA %s: %s",
+        extension[1:].upper(),
+        output_file,
+    )
+
+    return output_file
+
+
+def create_pae_csv(
+    or_name_dir,
+    output_dir,
+    separator="\t",
+    extension=".tsv",
+):
+    """
+    Extract the PAE matrix from the result pickle corresponding
+    to the best-ranked AlphaFold2 model and write it to:
+
+        {OR_NAME}_pae.tsv
+
+    or:
+
+        {OR_NAME}_pae.csv
+
+    Parameters:
+        or_name_dir: AlphaFold2 OR_NAME output directory.
+        output_dir: Directory where the output file is written.
+        separator: Field delimiter. Tab by default.
+        extension: Output file extension.
+
+    Returns:
+        Path to the created file, or None if PAE could not be created.
+    """
+
+    or_name = or_name_dir.name
+
+    ranking_file = or_name_dir / "ranking_debug.json"
+
+    if not ranking_file.is_file():
+        logger.warning(
+            "ranking_debug.json does not exist for '%s': %s",
+            or_name,
+            ranking_file,
+        )
+        return None
+
+    #
+    # Read ranking information.
+    #
+    import json
+
+    with open(
+        ranking_file,
+        "r",
+        encoding="utf-8",
+    ) as f:
+        ranking = json.load(f)
+
+    #
+    # AlphaFold2 stores models in ranking order in the
+    # "order" list. The first model is the best-ranked model.
+    #
+    model_order = ranking.get("order")
+
+    if not model_order:
+        logger.warning(
+            "No model order found in ranking_debug.json for '%s'.",
+            or_name,
+        )
+        return None
+
+    best_model = model_order[0]
+
+    logger.info(
+        "Best-ranked model for '%s': %s",
+        or_name,
+        best_model,
+    )
+
+    #
+    # Corresponding result pickle.
+    #
+    result_file = (
+        or_name_dir
+        / f"result_{best_model}.pkl"
+        #f"result_{best_model}_pred_0.pkl"
+    )
+
+    if not result_file.is_file():
+        logger.warning(
+            "Result file for best model does not exist for '%s': %s",
+            or_name,
+            result_file,
+        )
+        return None
+
+    logger.info(
+        "Reading PAE from %s",
+        result_file,
+    )
+
+    #
+    # Load AlphaFold2 result.
+    #
+    with open(
+        result_file,
+        "rb",
+    ) as f:
+        result = pickle.load(f)
+
+    #
+    # Extract PAE.
+    #
+    if "predicted_aligned_error" not in result:
+        logger.warning(
+            "predicted_aligned_error is not present in %s",
+            result_file,
+        )
+        return None
+
+    pae = result["predicted_aligned_error"]
+
+    logger.info(
+        "PAE matrix shape for '%s': %s",
+        or_name,
+        pae.shape,
+    )
+
+    #
+    # Create output directory if necessary.
+    #
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    output_file = output_dir / f"{or_name}_pae{extension}"
+
+    logger.info(
+        "Creating PAE %s for '%s': %s",
+        extension[1:].upper(),
+        or_name,
+        output_file,
+    )
+
+    #
+    # Write PAE matrix.
+    #
+    with open(
+        output_file,
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as f:
+
+        writer = csv.writer(
+            f,
+            delimiter=separator,
+        )
+
+        #
+        # First row:
+        #
+        #        Residue 1  Residue 2  ...
+        #
+        header = ["residue"]
+
+        for residue_number in range(
+            1,
+            pae.shape[1] + 1,
+        ):
+            header.append(residue_number)
+
+        writer.writerow(header)
+
+        #
+        # Each subsequent row contains:
+        #
+        # residue_number + PAE values
+        #
+        for residue_number, pae_row in enumerate(
+            pae,
+            start=1,
+        ):
+            writer.writerow(
+                [
+                    residue_number,
+                    *pae_row,
+                ]
+            )
+
+    logger.info(
+        "Created PAE %s: %s",
+        extension[1:].upper(),
         output_file,
     )
 
@@ -421,8 +615,8 @@ def main():
 
     parser = argparse.ArgumentParser(
         description=(
-            "Extract AlphaFold2 MSA data from "
-            "woutputs/<jobnumber> and create TSV files."
+            "Extract AlphaFold2 MSA and PAE data from "
+            "woutputs/<jobnumber>."
         )
     )
 
@@ -433,7 +627,43 @@ def main():
         help="Previously completed AlphaFold2 job number.",
     )
 
+    parser.add_argument(
+        "-s",
+        "--separator",
+        default="\t",
+        help=(
+            "Output delimiter. Use '\\t' for tab "
+            "or ',' for comma. Default: '\\t'."
+        ),
+    )
+
     args = parser.parse_args()
+
+    #
+    # argparse receives the literal characters '\\t' when the
+    # user specifies --separator "\\t".
+    #
+    # Convert them to an actual tab character.
+    #
+    separator = args.separator
+
+    if separator == r"\t":
+        separator = "\t"
+
+    #
+    # Determine output extension.
+    #
+    if separator == "\t":
+        extension = ".tsv"
+    elif separator == ",":
+        extension = ".csv"
+    else:
+        logger.error(
+            "Unsupported separator: %r. "
+            "Only '\\t' and ',' are supported.",
+            separator,
+        )
+        return 1
 
     #
     # Directory containing this Python script.
@@ -453,7 +683,10 @@ def main():
     #
     # Output directory.
     #
-    processed_dir = woutputs_dir / f"{args.jobnumber}_processed"
+    processed_dir = (
+        woutputs_dir
+        / f"{args.jobnumber}_processed"
+    )
 
     logger.info(
         "Script directory: %s",
@@ -468,6 +701,16 @@ def main():
     logger.info(
         "Processed output directory: %s",
         processed_dir,
+    )
+
+    logger.info(
+        "Output separator: %r",
+        separator,
+    )
+
+    logger.info(
+        "Output extension: %s",
+        extension,
     )
 
     if not job_dir.is_dir():
@@ -508,20 +751,28 @@ def main():
             or_name_dir.name,
         )
 
+        #
+        # Create MSA output.
+        #
         create_msa_csv(
             or_name_dir,
             processed_dir,
-            "\t",
+            separator,
+            extension,
         )
 
-    #
-    # Next processing step:
-    #
-    # create_pae(...)
-    #
+        #
+        # Create PAE output.
+        #
+        create_pae_csv(
+            or_name_dir,
+            processed_dir,
+            separator,
+            extension,
+        )
 
     logger.info(
-        "MSA processing completed for job %s.",
+        "MSA and PAE processing completed for job %s.",
         args.jobnumber,
     )
 
@@ -529,10 +780,9 @@ def main():
 
 
 if __name__ == "__main__":
-    if __name__ == "__main__":
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(levelname)s - %(message)s",
-        )
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
 
-        sys.exit(main())
+    sys.exit(main())
