@@ -754,23 +754,38 @@ def main():
         #
         # Create MSA output.
         #
-        create_msa_csv(
-            or_name_dir,
-            processed_dir,
-            separator,
-            extension,
-        )
+        try:
+            create_msa_csv(
+                or_name_dir,
+                processed_dir,
+                separator,
+                extension,
+            )
+        except Exception as ex:
+            logger.exception(
+                "Failed to create MSA for '%s'. "
+                f"exeption: {ex}"
+                "Continuing with PAE processing.",
+                or_name_dir.name,
+            )
 
         #
         # Create PAE output.
         #
-        create_pae_csv(
-            or_name_dir,
-            processed_dir,
-            separator,
-            extension,
-        )
-
+        try:
+            create_pae_csv(
+                or_name_dir,
+                processed_dir,
+                separator,
+                extension,
+            )
+        except Exception as ex:
+            logger.exception(
+                "Failed to create PAE for '%s'. "
+                f"exeption: {ex}"
+                "Continuing with the next OR_NAME.",
+                or_name_dir.name,
+            )
     logger.info(
         "MSA and PAE processing completed for job %s.",
         args.jobnumber,
