@@ -10,6 +10,29 @@
 #FASTA=GNE_homotetramer.fasta
 FASTA=GNE_homodimer.fasta
 
+# If a command-line argument was provided, use it instead
+if [ -n "$1" ]; then
+    FASTA="$1"
+    echo "+++++ Using FASTA file provided as argument: ${FASTA}"
+else
+    echo "----- No FASTA argument provided. Using default: ${FASTA}"
+fi
+echo ""
+
+
+# Expected location of the FASTA file
+FASTA_PATH="./AF_inputs/${FASTA}"
+
+# Check that the file exists
+if [ ! -f "${FASTA_PATH}" ]; then
+    echo "ERROR: FASTA file not found: ${FASTA_PATH}"
+    exit 1
+fi
+
+echo "Confirmed FASTA file exists: ${FASTA_PATH}"
+echo ""
+
+
 
 echo "======================================================="
 echo "!!! This script id for MULTIMER sequence only !!! (af2 data source updated 25 JAN 2026 to /users/public_data/AlphaFoldMulti/alphafold_data1122)."
