@@ -2,6 +2,7 @@ import argparse
 import csv
 import logging
 import pickle
+import re
 import sys
 from pathlib import Path
 
@@ -224,8 +225,8 @@ def write_section(
 def create_msa_csv(
     or_name_dir,
     output_dir,
-    separator="\t",
-    extension=".tsv",
+    separator=",",    #separator="\t",
+    extension=".csv", #extension=".tsv",
 ):
     """
     Create {OR_NAME}_msa.tsv or {OR_NAME}_msa.csv.
@@ -413,14 +414,558 @@ def create_msa_csv(
         output_file,
     )
 
+    logger.info(f"Calling create_msa_depth_csv, or_name={or_name}, output_dir={output_dir} ")
+
     return output_file
+
+#### Create MSA PLOT file
+
+def create_msa_depth_csv(
+    or_name_dir,
+    output_dir,
+    separator=",",
+    extension=".csv",
+    remove_duplicates=False,
+):
+    """
+    Create {OR_NAME}_msa_plot.csv containing MSA depth
+    for every residue position of the query sequence.
+
+    The original AlphaFold2 MSA files are read directly from:
+
+        {OR_NAME}/msas/
+
+    The following databases are processed:
+
+        bfd_uniclust_hits.a3m
+        mgnify_hits.sto
+        uniref90_hits.sto
+
+    pdb_hits.hhr is not processed because it contains
+    HHsearch template-search results rather than an MSA.
+
+    Parameters:
+        or_name_dir:
+            AlphaFold2 OR_NAME output directory.
+
+        output_dir:
+            Directory where the output file is written.
+
+        separator:
+            Output field delimiter.
+            Default: comma.
+
+        extension:
+            Output file extension.
+            Default: ".csv".
+
+        remove_duplicates:
+            If False, sequences from different databases are
+            counted independently.
+
+            If True, identical sequences are counted only once
+            across all databases.
+
+    Returns:
+        Path to the created file, or None if the file could
+        not be created.
+    """
+
+    or_name = or_name_dir.name
+
+    #
+    # ---------------------------------------------------------
+    # MSA directory.
+    # ---------------------------------------------------------
+    #
+
+    msas_dir = or_name_dir / "msas"
+
+    if not msas_dir.is_dir():
+        logger.warning(
+            "MSA directory does not exist for '%s': %s",
+            or_name,
+            msas_dir,
+        )
+        return None
+
+    #
+    # ---------------------------------------------------------
+    # Read the three actual MSA databases.
+    # ---------------------------------------------------------
+    #
+
+    database_sequences = {
+        "bfd_uniclust_hits.a3m": [],
+        "mgnify_hits.sto": [],
+        "uniref90_hits.sto": [],
+    }
+
+    #
+    # ---------------------------------------------------------
+    # 1. BFD / UniClust
+    # ---------------------------------------------------------
+    #
+
+    file_path = msas_dir / "bfd_uniclust_hits.a3m"
+
+    if file_path.is_file():
+
+        logger.info(
+            "Reading MSA depth data from %s",
+            file_path,
+        )
+
+        database_sequences[
+            "bfd_uniclust_hits.a3m"
+        ] = parse_a3m(file_path)
+
+    else:
+
+        logger.warning(
+            "MSA file does not exist: %s",
+            file_path,
+        )
+
+    #
+    # ---------------------------------------------------------
+    # 2. Mgnify
+    # ---------------------------------------------------------
+    #
+
+    file_path = msas_dir / "mgnify_hits.sto"
+
+    if file_path.is_file():
+
+        logger.info(
+            "Reading MSA depth data from %s",
+            file_path,
+        )
+
+        database_sequences[
+            "mgnify_hits.sto"
+        ] = parse_stockholm(file_path)
+
+    else:
+
+        logger.warning(
+            "MSA file does not exist: %s",
+            file_path,
+        )
+
+    #
+    # ---------------------------------------------------------
+    # 3. UniRef90
+    # ---------------------------------------------------------
+    #
+
+    file_path = msas_dir / "uniref90_hits.sto"
+
+    if file_path.is_file():
+
+        logger.info(
+            "Reading MSA depth data from %s",
+            file_path,
+        )
+
+        database_sequences[
+            "uniref90_hits.sto"
+        ] = parse_stockholm(file_path)
+
+    else:
+
+        logger.warning(
+            "MSA file does not exist: %s",
+            file_path,
+        )
+
+    #
+    # ---------------------------------------------------------
+    # Report number of sequences.
+    # ---------------------------------------------------------
+    #
+
+    for database, records in database_sequences.items():
+
+        logger.info(
+            "Found %d sequences in %s",
+            len(records),
+            database,
+        )
+
+    #
+    # ---------------------------------------------------------
+    # Find the query sequence.
+    # ---------------------------------------------------------
+    #
+    # AlphaFold's BFD/UniClust A3M file contains the query
+    # sequence as its first sequence.
+    #
+    # We use it to establish the query residue coordinate
+    # system.
+    # ---------------------------------------------------------
+    #
+
+    bfd_records = database_sequences[
+        "bfd_uniclust_hits.a3m"
+    ]
+
+    if not bfd_records:
+
+        logger.warning(
+            "No sequences found in bfd_uniclust_hits.a3m "
+            "for '%s'. Cannot determine query length.",
+            or_name,
+        )
+
+        return None
+
+    #
+    # First BFD sequence is the query.
+    #
+    query_sequence = bfd_records[0][1]
+
+    #
+    # A3M lowercase characters represent insertions relative
+    # to the query. They therefore do not correspond to query
+    # residue positions.
+    #
+    query_sequence = re.sub(
+        r"[a-z]",
+        "",
+        query_sequence,
+    )
+
+    #
+    # Remove alignment gap characters if present.
+    #
+    query_sequence = query_sequence.replace("-", "")
+    query_sequence = query_sequence.replace(".", "")
+
+    query_length = len(query_sequence)
+
+    logger.info(
+        "Query sequence length for '%s': %d",
+        or_name,
+        query_length,
+    )
+
+    #
+    # ---------------------------------------------------------
+    # Helper: normalize a sequence for duplicate detection.
+    # ---------------------------------------------------------
+    #
+
+    def normalize_sequence(sequence):
+        """
+        Return the biological sequence without alignment
+        insertions or gap characters.
+
+        This is used only for duplicate detection.
+        """
+
+        #
+        # Remove lowercase A3M insertion characters.
+        #
+        sequence = re.sub(
+            r"[a-z]",
+            "",
+            sequence,
+        )
+
+        #
+        # Remove alignment gaps.
+        #
+        sequence = sequence.replace("-", "")
+        sequence = sequence.replace(".", "")
+
+        return sequence.upper()
+
+    #
+    # ---------------------------------------------------------
+    # Optional duplicate removal.
+    # ---------------------------------------------------------
+    #
+    # This is deliberately OFF by default.
+    #
+    # When enabled, identical biological sequences occurring
+    # in different databases are counted only once.
+    # ---------------------------------------------------------
+    #
+
+    if remove_duplicates:
+
+        logger.info(
+            "Removing duplicate sequences across MSA databases "
+            "for '%s'.",
+            or_name,
+        )
+
+        seen_sequences = set()
+
+        for database in database_sequences:
+
+            unique_records = []
+
+            for sequence_id, sequence in (
+                database_sequences[database]
+            ):
+
+                normalized_sequence = normalize_sequence(
+                    sequence
+                )
+
+                if normalized_sequence in seen_sequences:
+                    continue
+
+                seen_sequences.add(
+                    normalized_sequence
+                )
+
+                unique_records.append(
+                    (
+                        sequence_id,
+                        sequence,
+                    )
+                )
+
+            database_sequences[database] = (
+                unique_records
+            )
+
+        logger.info(
+            "Number of unique sequences across databases: %d",
+            len(seen_sequences),
+        )
+
+    #
+    # ---------------------------------------------------------
+    # Calculate coverage of a single sequence.
+    # ---------------------------------------------------------
+    #
+
+    def calculate_sequence_coverage(
+        sequence,
+        database,
+    ):
+        """
+        Convert one MSA sequence into a list of length
+        query_length.
+
+        Each element is:
+
+            1 -> a residue is present at this query position
+
+            0 -> the sequence has a gap at this position
+
+        For A3M:
+            lowercase characters are insertions and are removed.
+
+        For Stockholm:
+            alignment columns are retained, and '-' / '.'
+            represent gaps.
+        """
+
+        coverage = [0] * query_length
+
+        #
+        # -----------------------------------------------------
+        # A3M
+        # -----------------------------------------------------
+        #
+        if database == "bfd_uniclust_hits.a3m":
+
+            #
+            # Lowercase letters are insertions relative to
+            # the query and therefore do not consume a query
+            # coordinate.
+            #
+            alignment = re.sub(
+                r"[a-z]",
+                "",
+                sequence,
+            )
+
+        #
+        # -----------------------------------------------------
+        # Stockholm
+        # -----------------------------------------------------
+        #
+        else:
+
+            #
+            # Stockholm sequences are already represented
+            # in alignment columns.
+            #
+            alignment = sequence
+
+        #
+        # Current query-coordinate position.
+        #
+        query_position = 0
+
+        for residue in alignment:
+
+            #
+            # We have reached the end of the query.
+            #
+            if query_position >= query_length:
+                break
+
+            #
+            # Gap:
+            #
+            # This sequence does not contain a residue at this
+            # query position, but the alignment column still
+            # corresponds to that query position.
+            #
+            if residue in "-.":
+                query_position += 1
+                continue
+
+            #
+            # Real residue.
+            #
+            coverage[query_position] = 1
+
+            query_position += 1
+
+        return coverage
+
+    #
+    # ---------------------------------------------------------
+    # Calculate depth for each database.
+    # ---------------------------------------------------------
+    #
+
+    depth_by_database = {}
+
+    for database, records in database_sequences.items():
+
+        depth = [0] * query_length
+
+        for sequence_id, sequence in records:
+
+            coverage = calculate_sequence_coverage(
+                sequence,
+                database,
+            )
+
+            for position in range(query_length):
+
+                depth[position] += coverage[position]
+
+        depth_by_database[database] = depth
+
+    #
+    # ---------------------------------------------------------
+    # Create output directory.
+    # ---------------------------------------------------------
+    #
+
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    #
+    # Output file:
+    #
+    #     HsOR343_msa_plot.csv
+    #
+    output_file = (
+        output_dir
+        / f"{or_name}_msa_plot{extension}"
+    )
+
+    logger.info(
+        "Creating MSA plot data %s for '%s': %s",
+        extension[1:].upper(),
+        or_name,
+        output_file,
+    )
+
+    #
+    # ---------------------------------------------------------
+    # Write output.
+    # ---------------------------------------------------------
+    #
+
+    with open(
+        output_file,
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as f:
+
+        writer = csv.writer(
+            f,
+            delimiter=separator,
+        )
+
+        #
+        # Header.
+        #
+        writer.writerow(
+            [
+                "residue_position",
+                "bfd_uniclust",
+                "mgnify",
+                "uniref90",
+                "total",
+            ]
+        )
+
+        #
+        # One row per query residue.
+        #
+        for position in range(query_length):
+
+            bfd_depth = depth_by_database[
+                "bfd_uniclust_hits.a3m"
+            ][position]
+
+            mgnify_depth = depth_by_database[
+                "mgnify_hits.sto"
+            ][position]
+
+            uniref90_depth = depth_by_database[
+                "uniref90_hits.sto"
+            ][position]
+
+            total_depth = (
+                bfd_depth
+                + mgnify_depth
+                + uniref90_depth
+            )
+
+            writer.writerow(
+                [
+                    position + 1,
+                    bfd_depth,
+                    mgnify_depth,
+                    uniref90_depth,
+                    total_depth,
+                ]
+            )
+
+    logger.info(
+        "Created MSA plot data %s: %s",
+        extension[1:].upper(),
+        output_file,
+    )
+
+    return output_file
+
+
+#### End of MSA PLOT file
 
 
 def create_pae_csv(
     or_name_dir,
     output_dir,
-    separator="\t",
-    extension=".tsv",
+    separator=",",  # separator="\t",
+    extension=".csv",  # extension=".tsv",
 ):
     """
     Extract the PAE matrix from the result pickle corresponding
@@ -630,7 +1175,7 @@ def main():
     parser.add_argument(
         "-s",
         "--separator",
-        default="\t",
+        default=",",
         help=(
             "Output delimiter. Use '\\t' for tab "
             "or ',' for comma. Default: '\\t'."
@@ -764,6 +1309,24 @@ def main():
         except Exception as ex:
             logger.exception(
                 "Failed to create MSA for '%s'. "
+                f"exeption: {ex}"
+                "Continuing with MSA PLOT processing.",
+                or_name_dir.name,
+            )
+
+        #
+        # Create MSA PLOT data output
+        #
+        try:
+            create_msa_depth_csv(
+                or_name_dir,
+                processed_dir,
+                separator,
+                extension,
+            )
+        except Exception as ex:
+            logger.exception(
+                "Failed to create MSA PLOT for '%s'. "
                 f"exeption: {ex}"
                 "Continuing with PAE processing.",
                 or_name_dir.name,
