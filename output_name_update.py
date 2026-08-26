@@ -143,7 +143,7 @@ def process_ranking_and_write_summary(job_folder: str, path: str = "."):
 
 def extract_best_number(best_model: str) -> int:
     # Extract the number between 'model_' and '_pred'
-    match = re.search(r'model_(\d+)_(pred|multimer)', best_model)
+    match = re.search(r'model_(\d+)_(pred|ptm_pred|multimer)', best_model)
     if match:
         return int(match.group(1))
     else:
