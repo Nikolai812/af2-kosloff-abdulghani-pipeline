@@ -327,7 +327,7 @@ def create_msa_csv(
 
         #
         # ---------------------------------------------------------
-        # 1. BFD / UniClust
+        # 1. BFD / UniRef
         # ---------------------------------------------------------
         #
         file_path = msas_dir / "bfd_uniref_hits.a3m"
@@ -342,7 +342,7 @@ def create_msa_csv(
 
             write_section(
                 writer,
-                "bfd_uniclust_hits.a3m",
+                "bfd_uniref_hits.a3m",
                 records,
                 section_type="sequence",
             )
@@ -442,7 +442,7 @@ def create_msa_depth_csv(
 
     The following databases are processed:
 
-        bfd_uniclust_hits.a3m
+        bfd_uniref_hits.a3m
         mgnify_hits.sto
         uniref90_hits.sto
 
@@ -501,14 +501,14 @@ def create_msa_depth_csv(
     #
 
     database_sequences = {
-        "bfd_uniclust_hits.a3m": [],
+        "bfd_uniref_hits.a3m": [],
         "mgnify_hits.sto": [],
         "uniref90_hits.sto": [],
     }
 
     #
     # ---------------------------------------------------------
-    # 1. BFD / UniClust
+    # 1. BFD / UniRef
     # ---------------------------------------------------------
     #
 
@@ -522,7 +522,7 @@ def create_msa_depth_csv(
         )
 
         database_sequences[
-            "bfd_uniclust_hits.a3m"
+            "bfd_uniref_hits.a3m"
         ] = parse_a3m(file_path)
 
     else:
@@ -603,7 +603,7 @@ def create_msa_depth_csv(
     # Find the query sequence.
     # ---------------------------------------------------------
     #
-    # AlphaFold's BFD/UniClust A3M file contains the query
+    # AlphaFold's BFD/UniRef A3M file contains the query
     # sequence as its first sequence.
     #
     # We use it to establish the query residue coordinate
@@ -612,13 +612,13 @@ def create_msa_depth_csv(
     #
 
     bfd_records = database_sequences[
-        "bfd_uniclust_hits.a3m"
+        "bfd_uniref_hits.a3m"
     ]
 
     if not bfd_records:
 
         logger.warning(
-            "No sequences found in bfd_uniclust_hits.a3m "
+            "No sequences found in bfd_uniref_hits.a3m "
             "for '%s'. Cannot determine query length.",
             or_name,
         )
@@ -778,7 +778,7 @@ def create_msa_depth_csv(
         # A3M
         # -----------------------------------------------------
         #
-        if database == "bfd_uniclust_hits.a3m":
+        if database == "bfd_uniref_hits.a3m":
 
             #
             # Lowercase letters are insertions relative to
@@ -914,7 +914,7 @@ def create_msa_depth_csv(
         writer.writerow(
             [
                 "residue_position",
-                "bfd_uniclust",
+                "bfd_uniref",
                 "mgnify",
                 "uniref90",
                 "total",
@@ -927,7 +927,7 @@ def create_msa_depth_csv(
         for position in range(query_length):
 
             bfd_depth = depth_by_database[
-                "bfd_uniclust_hits.a3m"
+                "bfd_uniref_hits.a3m"
             ][position]
 
             mgnify_depth = depth_by_database[
