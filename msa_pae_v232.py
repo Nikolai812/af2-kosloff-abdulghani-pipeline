@@ -432,534 +432,141 @@ def create_msa_depth_csv(
     extension=".csv",
     remove_duplicates=False,
 ):
+    """Write per-query-position raw and exact-observed-sequence-unique MSA depth.
+
+    A3M lowercase insertion residues are excluded from query coordinates but
+    retained for biological sequence identity. Stockholm columns are mapped
+    using the aligned query row; query-gap columns are insertions and excluded.
+
+    total_unique merges the query-position coverage masks (logical OR) of all
+    records with identical ungapped, uppercase observed amino-acid strings.
+    Identical observed fragments do not necessarily identify full-length proteins.
+
+    remove_duplicates is retained for compatibility but is deprecated and
+    ignored: raw and unique depths are always written together.
     """
-    Create {OR_NAME}_msa_plot.csv containing MSA depth
-    for every residue position of the query sequence.
-
-    The original AlphaFold2 MSA files are read directly from:
-
-        {OR_NAME}/msas/
-
-    The following databases are processed:
-
-        bfd_uniref_hits.a3m
-        mgnify_hits.sto
-        uniref90_hits.sto
-
-    pdb_hits.hhr is not processed because it contains
-    HHsearch template-search results rather than an MSA.
-
-    Parameters:
-        or_name_dir:
-            AlphaFold2 OR_NAME output directory.
-
-        output_dir:
-            Directory where the output file is written.
-
-        separator:
-            Output field delimiter.
-            Default: comma.
-
-        extension:
-            Output file extension.
-            Default: ".csv".
-
-        remove_duplicates:
-            If False, sequences from different databases are
-            counted independently.
-
-            If True, identical sequences are counted only once
-            across all databases.
-
-    Returns:
-        Path to the created file, or None if the file could
-        not be created.
-    """
+    if remove_duplicates:
+        logger.warning("remove_duplicates is deprecated; writing both raw and unique depths")
 
     or_name = or_name_dir.name
-
-    #
-    # ---------------------------------------------------------
-    # MSA directory.
-    # ---------------------------------------------------------
-    #
-
     msas_dir = or_name_dir / "msas"
-
     if not msas_dir.is_dir():
-        logger.warning(
-            "MSA directory does not exist for '%s': %s",
-            or_name,
-            msas_dir,
-        )
+        logger.warning("MSA directory does not exist for '%s': %s", or_name, msas_dir)
         return None
 
-    #
-    # ---------------------------------------------------------
-    # Read the three actual MSA databases.
-    # ---------------------------------------------------------
-    #
+    databases = (
+        "bfd_uniref_hits.a3m",
+        "mgnify_hits.sto",
+        "uniref90_hits.sto",
+    )
+    bfd_path = msas_dir / databases[0]
+    if not bfd_path.is_file():
+        logger.error("Required query-containing A3M file missing: %s", bfd_path)
+        return None
 
-    database_sequences = {
-        "bfd_uniref_hits.a3m": [],
-        "mgnify_hits.sto": [],
-        "uniref90_hits.sto": [],
-    }
-
-    #
-    # ---------------------------------------------------------
-    # 1. BFD / UniRef
-    # ---------------------------------------------------------
-    #
-
-    file_path = msas_dir / "bfd_uniref_hits.a3m"
-
-    if file_path.is_file():
-
-        logger.info(
-            "Reading MSA depth data from %s",
-            file_path,
-        )
-
-        database_sequences[
-            "bfd_uniref_hits.a3m"
-        ] = parse_a3m(file_path)
-
-    else:
-
-        logger.warning(
-            "MSA file does not exist: %s",
-            file_path,
-        )
-
-    #
-    # ---------------------------------------------------------
-    # 2. Mgnify
-    # ---------------------------------------------------------
-    #
-
-    file_path = msas_dir / "mgnify_hits.sto"
-
-    if file_path.is_file():
-
-        logger.info(
-            "Reading MSA depth data from %s",
-            file_path,
-        )
-
-        database_sequences[
-            "mgnify_hits.sto"
-        ] = parse_stockholm(file_path)
-
-    else:
-
-        logger.warning(
-            "MSA file does not exist: %s",
-            file_path,
-        )
-
-    #
-    # ---------------------------------------------------------
-    # 3. UniRef90
-    # ---------------------------------------------------------
-    #
-
-    file_path = msas_dir / "uniref90_hits.sto"
-
-    if file_path.is_file():
-
-        logger.info(
-            "Reading MSA depth data from %s",
-            file_path,
-        )
-
-        database_sequences[
-            "uniref90_hits.sto"
-        ] = parse_stockholm(file_path)
-
-    else:
-
-        logger.warning(
-            "MSA file does not exist: %s",
-            file_path,
-        )
-
-    #
-    # ---------------------------------------------------------
-    # Report number of sequences.
-    # ---------------------------------------------------------
-    #
-
-    for database, records in database_sequences.items():
-
-        logger.info(
-            "Found %d sequences in %s",
-            len(records),
-            database,
-        )
-
-    #
-    # ---------------------------------------------------------
-    # Find the query sequence.
-    # ---------------------------------------------------------
-    #
-    # AlphaFold's BFD/UniRef A3M file contains the query
-    # sequence as its first sequence.
-    #
-    # We use it to establish the query residue coordinate
-    # system.
-    # ---------------------------------------------------------
-    #
-
-    bfd_records = database_sequences[
-        "bfd_uniref_hits.a3m"
-    ]
-
+    bfd_records = parse_a3m(bfd_path)
     if not bfd_records:
-
-        logger.warning(
-            "No sequences found in bfd_uniref_hits.a3m "
-            "for '%s'. Cannot determine query length.",
-            or_name,
-        )
-
+        logger.error("No query in %s", bfd_path)
         return None
 
-    #
-    # First BFD sequence is the query.
-    #
-    query_sequence = bfd_records[0][1]
-
-    #
-    # A3M lowercase characters represent insertions relative
-    # to the query. They therefore do not correspond to query
-    # residue positions.
-    #
-    query_sequence = re.sub(
-        r"[a-z]",
-        "",
-        query_sequence,
-    )
-
-    #
-    # Remove alignment gap characters if present.
-    #
-    query_sequence = query_sequence.replace("-", "")
-    query_sequence = query_sequence.replace(".", "")
-
-    query_length = len(query_sequence)
-
-    logger.info(
-        "Query sequence length for '%s': %d",
-        or_name,
-        query_length,
-    )
-
-    #
-    # ---------------------------------------------------------
-    # Helper: normalize a sequence for duplicate detection.
-    # ---------------------------------------------------------
-    #
+    # The first A3M record is the query. Query positions exclude insertions.
+    query = re.sub(r"[a-z]", "", bfd_records[0][1]).replace("-", "").replace(".", "").upper()
+    query_length = len(query)
+    if not query_length:
+        raise ValueError("Empty query sequence in " + str(bfd_path))
 
     def normalize_sequence(sequence):
-        """
-        Return the biological sequence without alignment
-        insertions or gap characters.
+        # Keep lowercase A3M insertion residues as biological amino acids.
+        return sequence.replace("-", "").replace(".", "").upper()
 
-        This is used only for duplicate detection.
-        """
+    def a3m_coverage(sequence):
+        alignment = re.sub(r"[a-z]", "", sequence)
+        if len(alignment) != query_length:
+            raise ValueError("A3M alignment length %d differs from query length %d" %
+                             (len(alignment), query_length))
+        return bytearray(0 if residue in "-." else 1 for residue in alignment)
 
-        #
-        # Remove lowercase A3M insertion characters.
-        #
-        sequence = re.sub(
-            r"[a-z]",
-            "",
-            sequence,
-        )
+    def stockholm_records_and_query_columns(path):
+        records = parse_stockholm(path)
+        if not records:
+            raise ValueError("No Stockholm sequences in " + str(path))
+        # Identify the query by its full ungapped sequence, not by record ID.
+        # All rows must have the same Stockholm alignment length.
+        aligned_lengths = {len(sequence) for _, sequence in records}
+        if len(aligned_lengths) != 1:
+            raise ValueError("Inconsistent Stockholm row lengths in " + str(path))
+        matches = [sequence for _, sequence in records
+                   if normalize_sequence(sequence) == query]
+        if not matches:
+            raise ValueError("Cannot identify the full-length query row in %s; "
+                             "refusing to guess Stockholm/query coordinate mapping" % path)
+        query_alignment = matches[0]
+        query_columns = [i for i, residue in enumerate(query_alignment)
+                         if residue not in "-."]
+        if len(query_columns) != query_length:
+            raise ValueError("Stockholm query coordinate mismatch in " + str(path))
+        return records, query_columns
 
-        #
-        # Remove alignment gaps.
-        #
-        sequence = sequence.replace("-", "")
-        sequence = sequence.replace(".", "")
+    depth_by_database = {database: [0] * query_length for database in databases}
+    # Each normalized observed sequence owns one union of covered query positions.
+    unique_coverage = {}
 
-        return sequence.upper()
-
-    #
-    # ---------------------------------------------------------
-    # Optional duplicate removal.
-    # ---------------------------------------------------------
-    #
-    # This is deliberately OFF by default.
-    #
-    # When enabled, identical biological sequences occurring
-    # in different databases are counted only once.
-    # ---------------------------------------------------------
-    #
-
-    if remove_duplicates:
-
-        logger.info(
-            "Removing duplicate sequences across MSA databases "
-            "for '%s'.",
-            or_name,
-        )
-
-        seen_sequences = set()
-
-        for database in database_sequences:
-
-            unique_records = []
-
-            for sequence_id, sequence in (
-                database_sequences[database]
-            ):
-
-                normalized_sequence = normalize_sequence(
-                    sequence
-                )
-
-                if normalized_sequence in seen_sequences:
-                    continue
-
-                seen_sequences.add(
-                    normalized_sequence
-                )
-
-                unique_records.append(
-                    (
-                        sequence_id,
-                        sequence,
-                    )
-                )
-
-            database_sequences[database] = (
-                unique_records
-            )
-
-        logger.info(
-            "Number of unique sequences across databases: %d",
-            len(seen_sequences),
-        )
-
-    #
-    # ---------------------------------------------------------
-    # Calculate coverage of a single sequence.
-    # ---------------------------------------------------------
-    #
-
-    def calculate_sequence_coverage(
-        sequence,
-        database,
-    ):
-        """
-        Convert one MSA sequence into a list of length
-        query_length.
-
-        Each element is:
-
-            1 -> a residue is present at this query position
-
-            0 -> the sequence has a gap at this position
-
-        For A3M:
-            lowercase characters are insertions and are removed.
-
-        For Stockholm:
-            alignment columns are retained, and '-' / '.'
-            represent gaps.
-        """
-
-        coverage = [0] * query_length
-
-        #
-        # -----------------------------------------------------
-        # A3M
-        # -----------------------------------------------------
-        #
-        if database == "bfd_uniref_hits.a3m":
-
-            #
-            # Lowercase letters are insertions relative to
-            # the query and therefore do not consume a query
-            # coordinate.
-            #
-            alignment = re.sub(
-                r"[a-z]",
-                "",
-                sequence,
-            )
-
-        #
-        # -----------------------------------------------------
-        # Stockholm
-        # -----------------------------------------------------
-        #
+    for database in databases:
+        path = msas_dir / database
+        if not path.is_file():
+            logger.warning("MSA file does not exist: %s", path)
+            continue
+        if database == databases[0]:
+            records = bfd_records
+            query_columns = None
         else:
+            records, query_columns = stockholm_records_and_query_columns(path)
+        logger.info("Found %d sequences in %s", len(records), database)
 
-            #
-            # Stockholm sequences are already represented
-            # in alignment columns.
-            #
-            alignment = sequence
-
-        #
-        # Current query-coordinate position.
-        #
-        query_position = 0
-
-        for residue in alignment:
-
-            #
-            # We have reached the end of the query.
-            #
-            if query_position >= query_length:
-                break
-
-            #
-            # Gap:
-            #
-            # This sequence does not contain a residue at this
-            # query position, but the alignment column still
-            # corresponds to that query position.
-            #
-            if residue in "-.":
-                query_position += 1
-                continue
-
-            #
-            # Real residue.
-            #
-            coverage[query_position] = 1
-
-            query_position += 1
-
-        return coverage
-
-    #
-    # ---------------------------------------------------------
-    # Calculate depth for each database.
-    # ---------------------------------------------------------
-    #
-
-    depth_by_database = {}
-
-    for database, records in database_sequences.items():
-
-        depth = [0] * query_length
-
+        depth = depth_by_database[database]
         for sequence_id, sequence in records:
+            if query_columns is None:
+                coverage = a3m_coverage(sequence)
+            else:
+                coverage = bytearray(
+                    0 if sequence[col] in "-." else 1 for col in query_columns
+                )
 
-            coverage = calculate_sequence_coverage(
-                sequence,
-                database,
-            )
+            # Raw depth: preserve every original record, including duplicates.
+            for pos, covered in enumerate(coverage):
+                depth[pos] += covered
 
-            for position in range(query_length):
+            key = normalize_sequence(sequence)
+            previous = unique_coverage.get(key)
+            if previous is None:
+                unique_coverage[key] = coverage
+            else:
+                # One sequence can have complementary coverage in different MSAs.
+                for pos, covered in enumerate(coverage):
+                    if covered:
+                        previous[pos] = 1
 
-                depth[position] += coverage[position]
+    total_unique = [0] * query_length
+    for coverage in unique_coverage.values():
+        for pos, covered in enumerate(coverage):
+            total_unique[pos] += covered
 
-        depth_by_database[database] = depth
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file = output_dir / f"{or_name}_msa_plot{extension}"
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f, delimiter=separator)
+        writer.writerow(["residue_position", "bfd_uniref", "mgnify",
+                         "uniref90", "total", "total_unique"])
+        for pos in range(query_length):
+            bfd = depth_by_database[databases[0]][pos]
+            mgnify = depth_by_database[databases[1]][pos]
+            uniref90 = depth_by_database[databases[2]][pos]
+            total = bfd + mgnify + uniref90
+            writer.writerow([pos + 1, bfd, mgnify, uniref90, total,
+                             total_unique[pos]])
 
-    #
-    # ---------------------------------------------------------
-    # Create output directory.
-    # ---------------------------------------------------------
-    #
-
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    #
-    # Output file:
-    #
-    #     HsOR343_msa_plot.csv
-    #
-    output_file = (
-        output_dir
-        / f"{or_name}_msa_plot{extension}"
-    )
-
-    logger.info(
-        "Creating MSA plot data %s for '%s': %s",
-        extension[1:].upper(),
-        or_name,
-        output_file,
-    )
-
-    #
-    # ---------------------------------------------------------
-    # Write output.
-    # ---------------------------------------------------------
-    #
-
-    with open(
-        output_file,
-        "w",
-        newline="",
-        encoding="utf-8",
-    ) as f:
-
-        writer = csv.writer(
-            f,
-            delimiter=separator,
-        )
-
-        #
-        # Header.
-        #
-        writer.writerow(
-            [
-                "residue_position",
-                "bfd_uniref",
-                "mgnify",
-                "uniref90",
-                "total",
-            ]
-        )
-
-        #
-        # One row per query residue.
-        #
-        for position in range(query_length):
-
-            bfd_depth = depth_by_database[
-                "bfd_uniref_hits.a3m"
-            ][position]
-
-            mgnify_depth = depth_by_database[
-                "mgnify_hits.sto"
-            ][position]
-
-            uniref90_depth = depth_by_database[
-                "uniref90_hits.sto"
-            ][position]
-
-            total_depth = (
-                bfd_depth
-                + mgnify_depth
-                + uniref90_depth
-            )
-
-            writer.writerow(
-                [
-                    position + 1,
-                    bfd_depth,
-                    mgnify_depth,
-                    uniref90_depth,
-                    total_depth,
-                ]
-            )
-
-    logger.info(
-        "Created MSA plot data %s: %s",
-        extension[1:].upper(),
-        output_file,
-    )
-
+    logger.info("Created MSA plot CSV for %s: %s (unique observed sequences: %d)",
+                or_name, output_file, len(unique_coverage))
     return output_file
 
 
