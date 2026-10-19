@@ -83,7 +83,7 @@ echo "== Split files: $SPLITTED_FILES"
 for file in $SPLITTED_FILES; do
     echo "Start processing file: $file  at $(date)"
     
-    RUNOPTS="--model_preset=monomer \
+    RUNOPTS="--model_preset=monomer_ptm \
 	--num_multimer_predictions_per_model=1 \
         --fasta_paths=/AF_inputs/SUBMONO/${file} \
         --output_dir=/outputs --data_dir=/data/ \
